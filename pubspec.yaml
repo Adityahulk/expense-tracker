@@ -1,0 +1,47 @@
+name: expense_tracker
+description: "Offline expense tracker for material expenses."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.2.6 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.2
+
+  # State management
+  flutter_riverpod: ^2.4.10
+
+  # Local database
+  sqflite: ^2.3.2
+  path: ^1.8.3
+  path_provider: ^2.1.2
+
+  # Excel export
+  excel: ^4.0.2
+
+  # Files / sharing / opening
+  open_filex: ^4.4.0
+  share_plus: ^7.2.2
+
+  # External storage (Downloads path)
+  external_path: ^1.0.3
+
+  # Permissions
+  permission_handler: ^11.2.0
+
+  # Formatting
+  intl: ^0.19.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^3.0.1
+  sqflite_common_ffi: ^2.3.2  # for unit tests on desktop
+
+flutter:
+  uses-material-design: true
