@@ -26,15 +26,16 @@ class ExpenseTile extends StatelessWidget {
     final e = row.expense;
     final qtyStr = _formatQty(e.quantity);
     final unitStr = row.unitName ?? '';
-    final subtitle = StringBuffer()
-      ..write(qtyStr);
-    if (unitStr.isNotEmpty) subtitle.write(' $unitStr');
-    if (row.qualityName != null) subtitle.write(' · ${row.qualityName}');
-    subtitle
-      ..write(' · ')
-      ..write(_formatDate(e.date))
-      ..write(' · ')
-      ..write(e.personName);
+
+    final firstLine = StringBuffer()..write(qtyStr);
+    if (unitStr.isNotEmpty) firstLine.write(' $unitStr');
+    if (row.qualityName != null) firstLine.write(' · ${row.qualityName}');
+    firstLine.write(' · ${_formatDate(e.date)}');
+    if (e.personName.trim().isNotEmpty) {
+      firstLine.write(' · ${e.personName}');
+    }
+
+    final routeLine = '${row.fromDisplay()}  →  ${row.toDisplay()}';
 
     return ListTile(
       title: Row(
@@ -57,14 +58,38 @@ class ExpenseTile extends StatelessWidget {
       ),
       subtitle: Padding(
         padding: const EdgeInsets.only(top: 4),
-        child: Text(
-          subtitle.toString(),
-          style: const TextStyle(fontSize: 13),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(firstLine.toString(), style: const TextStyle(fontSize: 13)),
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                routeLine,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey.shade700,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ),
+            if (e.note != null && e.note!.trim().isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Text(
+                  e.note!,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 12, color: Colors.grey.shade600),
+                ),
+              ),
+          ],
         ),
       ),
       onTap: onTap,
       onLongPress: onLongPress,
-      isThreeLine: e.note != null && e.note!.trim().isNotEmpty,
+      isThreeLine: true,
     );
   }
 

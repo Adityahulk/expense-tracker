@@ -1,23 +1,25 @@
-import 'dart:io';
+import 'dart:typed_data';
 
-import 'package:path/path.dart' as p;
+import 'package:archive/archive.dart';
 
 import '../db/database.dart';
 import '../models/quality.dart';
 import '../models/unit.dart';
 import '../repositories/expense_repo.dart';
 import '../repositories/material_repo.dart';
+import '../repositories/site_repo.dart';
+import '../repositories/supplier_repo.dart';
 import 'excel_export_service.dart';
-import 'file_paths.dart';
 
-class BackupResult {
-  final String backupDirPath;
-  final String excelPath;
-  final String dbCopyPath;
-  const BackupResult({
-    required this.backupDirPath,
-    required this.excelPath,
-    required this.dbCopyPath,
+class BackupBundle {
+  final Uint8List zipBytes;
+  final String suggestedFilename;
+  final int totalExpenses;
+
+  const BackupBundle({
+    required this.zipBytes,
+    required this.suggestedFilename,
+    required this.totalExpenses,
   });
 }
 
@@ -25,24 +27,19 @@ class BackupService {
   BackupService({
     required this.db,
     required this.materialRepo,
+    required this.supplierRepo,
+    required this.siteRepo,
     required this.expenseRepo,
   });
 
   final AppDatabase db;
   final MaterialRepo materialRepo;
+  final SupplierRepo supplierRepo;
+  final SiteRepo siteRepo;
   final ExpenseRepo expenseRepo;
 
-  /// Writes an Excel backup AND a raw SQLite copy into
-  /// `<Downloads>/expense-tracker/backup_<ts>/` and returns both paths.
-  Future<BackupResult> createFullBackup() async {
-    final downloads = await FilePaths.downloadsDir();
-    final ts = FilePaths.timestampSuffix();
-    final backupDir = Directory(p.join(downloads, 'backup_$ts'));
-    if (!await backupDir.exists()) {
-      await backupDir.create(recursive: true);
-    }
-
-    // 1. Excel: pulls expenses + master data.
+  /// Pulls all data, builds Excel + db bytes, zips them, returns the bundle.
+  Future<BackupBundle> buildFullBackupZip() async {
     final expenses = await expenseRepo.listAll();
     final materials = await materialRepo.listMaterials();
     final qualitiesByMaterial = <int, List<Quality>>{};
@@ -52,26 +49,45 @@ class BackupService {
       qualitiesByMaterial[m.id!] = await materialRepo.listQualities(m.id!);
       unitsByMaterial[m.id!] = await materialRepo.listUnits(m.id!);
     }
+    final suppliers = await supplierRepo.listSuppliers();
+    final sites = await siteRepo.listSites();
 
     final excelService = ExcelExportService();
-    final tmpExcelPath = await excelService.exportFullBackup(
+    final excelBytes = excelService.buildFullBackupXlsx(
       expenses: expenses,
       materials: materials,
       qualitiesByMaterial: qualitiesByMaterial,
       unitsByMaterial: unitsByMaterial,
+      suppliers: suppliers,
+      sites: sites,
     );
-    // Move from Downloads root to the timestamped subfolder.
-    final finalExcelPath = p.join(backupDir.path, p.basename(tmpExcelPath));
-    await File(tmpExcelPath).rename(finalExcelPath);
+    final dbBytes = await db.readBytes();
 
-    // 2. Raw SQLite copy (so any future tool can reconstruct everything).
-    final dbCopyPath = p.join(backupDir.path, 'expense_tracker.db');
-    await File(db.path).copy(dbCopyPath);
+    final archive = Archive();
+    archive.addFile(ArchiveFile(
+      'expense-tracker-backup.xlsx',
+      excelBytes.length,
+      excelBytes,
+    ));
+    archive.addFile(ArchiveFile(
+      'expense_tracker.db',
+      dbBytes.length,
+      dbBytes,
+    ));
+    final zipped = ZipEncoder().encode(archive);
+    if (zipped == null) {
+      throw StateError('ZipEncoder.encode returned null');
+    }
 
-    return BackupResult(
-      backupDirPath: backupDir.path,
-      excelPath: finalExcelPath,
-      dbCopyPath: dbCopyPath,
+    final now = DateTime.now();
+    String two(int n) => n.toString().padLeft(2, '0');
+    final ts = '${now.year}-${two(now.month)}-${two(now.day)}_'
+        '${two(now.hour)}${two(now.minute)}${two(now.second)}';
+
+    return BackupBundle(
+      zipBytes: Uint8List.fromList(zipped),
+      suggestedFilename: 'expense-tracker_backup_$ts.zip',
+      totalExpenses: expenses.length,
     );
   }
 }

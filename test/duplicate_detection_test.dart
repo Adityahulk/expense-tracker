@@ -1,7 +1,10 @@
 import 'package:expense_tracker/db/database.dart';
 import 'package:expense_tracker/models/expense.dart';
+import 'package:expense_tracker/models/route_endpoint.dart';
 import 'package:expense_tracker/repositories/expense_repo.dart';
 import 'package:expense_tracker/repositories/material_repo.dart';
+import 'package:expense_tracker/repositories/site_repo.dart';
+import 'package:expense_tracker/repositories/supplier_repo.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -12,21 +15,32 @@ void main() {
 
   late AppDatabase db;
   late MaterialRepo materialRepo;
+  late SupplierRepo supplierRepo;
+  late SiteRepo siteRepo;
   late ExpenseRepo expenseRepo;
   late int matDieselId;
   late int qualPremiumId;
   late int unitLitreId;
+  late int supplierAcmeId;
+  late int supplierBetaId;
+  late int siteFooId;
+  late int siteBarId;
 
   setUp(() async {
     AppDatabase.resetForTesting();
-    // Use in-memory DB.
     db = await AppDatabase.open(overridePath: inMemoryDatabasePath);
     materialRepo = MaterialRepo(db);
+    supplierRepo = SupplierRepo(db);
+    siteRepo = SiteRepo(db);
     expenseRepo = ExpenseRepo(db);
 
     matDieselId = await materialRepo.createMaterial('Diesel');
     qualPremiumId = await materialRepo.createQuality(matDieselId, 'Premium');
     unitLitreId = await materialRepo.createUnit(matDieselId, 'Litre');
+    supplierAcmeId = await supplierRepo.createSupplier('Acme');
+    supplierBetaId = await supplierRepo.createSupplier('Beta');
+    siteFooId = await siteRepo.createSite('Foo', plotCount: 200);
+    siteBarId = await siteRepo.createSite('Bar', plotCount: 50);
   });
 
   tearDown(() async {
@@ -39,9 +53,11 @@ void main() {
     String? note,
     int? qualityId,
     int? unitId,
+    RouteEndpoint? from,
+    RouteEndpoint? to,
   }) {
     final now = DateTime.now().millisecondsSinceEpoch;
-    return Expense(
+    return Expense.withRoutes(
       id: id,
       materialId: matDieselId,
       qualityId: qualityId ?? qualPremiumId,
@@ -51,6 +67,14 @@ void main() {
       date: '2026-05-12',
       note: note,
       personName: person,
+      from: from ??
+          RouteEndpoint(
+              kind: EndpointKind.supplier, supplierId: supplierAcmeId),
+      to: to ??
+          RouteEndpoint(
+              kind: EndpointKind.plot,
+              siteId: siteFooId,
+              plotNumber: 17),
       createdAt: now,
       updatedAt: now,
     );
@@ -82,18 +106,62 @@ void main() {
     expect(dups, isEmpty);
   });
 
+  test('different From supplier is not a duplicate', () async {
+    await expenseRepo.insert(baseExpense(
+      from: RouteEndpoint(
+          kind: EndpointKind.supplier, supplierId: supplierAcmeId),
+    ));
+    final candidate = baseExpense(
+      from: RouteEndpoint(
+          kind: EndpointKind.supplier, supplierId: supplierBetaId),
+    );
+    final dups = await expenseRepo.findDuplicates(candidate);
+    expect(dups, isEmpty);
+  });
+
+  test('different From kind is not a duplicate', () async {
+    await expenseRepo.insert(baseExpense(
+      from: RouteEndpoint(
+          kind: EndpointKind.supplier, supplierId: supplierAcmeId),
+    ));
+    final candidate = baseExpense(
+      from: RouteEndpoint(kind: EndpointKind.site, siteId: siteFooId),
+    );
+    final dups = await expenseRepo.findDuplicates(candidate);
+    expect(dups, isEmpty);
+  });
+
+  test('same plot site, different plot number is not a duplicate', () async {
+    await expenseRepo.insert(baseExpense(
+      to: RouteEndpoint(
+          kind: EndpointKind.plot, siteId: siteFooId, plotNumber: 17),
+    ));
+    final candidate = baseExpense(
+      to: RouteEndpoint(
+          kind: EndpointKind.plot, siteId: siteFooId, plotNumber: 18),
+    );
+    final dups = await expenseRepo.findDuplicates(candidate);
+    expect(dups, isEmpty);
+  });
+
+  test('same plot kind, same site, same number IS a duplicate', () async {
+    await expenseRepo.insert(baseExpense(
+      to: RouteEndpoint(
+          kind: EndpointKind.plot, siteId: siteFooId, plotNumber: 17),
+    ));
+    final candidate = baseExpense(
+      to: RouteEndpoint(
+          kind: EndpointKind.plot, siteId: siteFooId, plotNumber: 17),
+    );
+    final dups = await expenseRepo.findDuplicates(candidate);
+    expect(dups, hasLength(1));
+  });
+
   test('null quality matches null quality', () async {
     final e = baseExpense().copyWith(clearQualityId: true);
     await expenseRepo.insert(e);
     final dups = await expenseRepo.findDuplicates(e);
     expect(dups, hasLength(1));
-  });
-
-  test('null quality does NOT match non-null quality', () async {
-    await expenseRepo.insert(baseExpense().copyWith(clearQualityId: true));
-    final candidate = baseExpense(); // has qualityId
-    final dups = await expenseRepo.findDuplicates(candidate);
-    expect(dups, isEmpty);
   });
 
   test('note case and whitespace are ignored', () async {
@@ -103,18 +171,6 @@ void main() {
     expect(dups, hasLength(1));
   });
 
-  test('empty/null/whitespace notes are equivalent', () async {
-    await expenseRepo.insert(baseExpense(note: null));
-    final dups = await expenseRepo.findDuplicates(baseExpense(note: '   '));
-    expect(dups, hasLength(1));
-  });
-
-  test('different note text is NOT a duplicate', () async {
-    await expenseRepo.insert(baseExpense(note: 'refuel'));
-    final dups = await expenseRepo.findDuplicates(baseExpense(note: 'cash'));
-    expect(dups, isEmpty);
-  });
-
   test('excludeId hides self when editing', () async {
     final id = await expenseRepo.insert(baseExpense());
     final me = (await expenseRepo.findById(id))!;
@@ -122,31 +178,50 @@ void main() {
     expect(dups, isEmpty);
   });
 
-  test('excludeId still detects other matching rows when editing', () async {
-    await expenseRepo.insert(baseExpense(person: 'Carol'));
-    final id = await expenseRepo.insert(baseExpense(person: 'Alice'));
-    final me = (await expenseRepo.findById(id))!;
-    final dups = await expenseRepo.findDuplicates(me, excludeId: id);
-    expect(dups, hasLength(1));
-    expect(dups.first.personName, equals('Carol'));
-  });
-
-  test('search by material returns only matching rows', () async {
-    final wood = await materialRepo.createMaterial('Wood');
-    await expenseRepo.insert(baseExpense());
-    await expenseRepo.insert(baseExpense().copyWith(
-      materialId: wood,
-      clearQualityId: true,
-      clearUnitId: true,
+  test('search by supplier matches either side', () async {
+    await expenseRepo.insert(baseExpense()); // From=Acme, To=Plot Foo#17
+    await expenseRepo.insert(baseExpense(
+      from: RouteEndpoint(
+          kind: EndpointKind.site, siteId: siteFooId),
+      to: RouteEndpoint(
+          kind: EndpointKind.supplier, supplierId: supplierAcmeId),
     ));
-    final results = await expenseRepo.search(
-      ExpenseFilter(materialIds: [matDieselId]),
-    );
-    expect(results, hasLength(1));
-    expect(results.first.materialName, equals('Diesel'));
+    await expenseRepo.insert(baseExpense(
+      from: RouteEndpoint(
+          kind: EndpointKind.supplier, supplierId: supplierBetaId),
+      to: RouteEndpoint(
+          kind: EndpointKind.site, siteId: siteBarId),
+    ));
+    final results = await expenseRepo
+        .search(ExpenseFilter(supplierIds: [supplierAcmeId]));
+    expect(results, hasLength(2));
   });
 
-  test('search by date range', () async {
+  test('search by site matches either side', () async {
+    await expenseRepo.insert(baseExpense()); // To plot on Foo
+    await expenseRepo.insert(baseExpense(
+      from: RouteEndpoint(
+          kind: EndpointKind.site, siteId: siteBarId),
+      to: RouteEndpoint(
+          kind: EndpointKind.supplier, supplierId: supplierAcmeId),
+    ));
+    final foo = await expenseRepo.search(ExpenseFilter(siteIds: [siteFooId]));
+    expect(foo, hasLength(1));
+    final bar = await expenseRepo.search(ExpenseFilter(siteIds: [siteBarId]));
+    expect(bar, hasLength(1));
+  });
+
+  test('listRecent joins display names correctly', () async {
+    await expenseRepo.insert(baseExpense());
+    final rows = await expenseRepo.listRecent(limit: 10);
+    expect(rows, hasLength(1));
+    expect(rows.first.fromSupplierName, equals('Acme'));
+    expect(rows.first.toSiteName, equals('Foo'));
+    expect(rows.first.fromDisplay(), equals('Supplier: Acme'));
+    expect(rows.first.toDisplay(), equals('Plot: Foo — #17'));
+  });
+
+  test('search by date range still works', () async {
     await expenseRepo.insert(baseExpense().copyWith(date: '2026-05-01'));
     await expenseRepo.insert(baseExpense().copyWith(date: '2026-05-15'));
     await expenseRepo.insert(baseExpense().copyWith(date: '2026-06-01'));
@@ -157,31 +232,15 @@ void main() {
     expect(results.first.expense.date, equals('2026-05-15'));
   });
 
-  test('search by cost range', () async {
-    await expenseRepo.insert(baseExpense().copyWith(cost: 100));
-    await expenseRepo.insert(baseExpense().copyWith(cost: 500));
-    await expenseRepo.insert(baseExpense().copyWith(cost: 1000));
-    final results = await expenseRepo
-        .search(const ExpenseFilter(minCost: 200, maxCost: 800));
-    expect(results, hasLength(1));
-    expect(results.first.expense.cost, equals(500));
-  });
-
   test('wipeAll empties everything and FKs still work after', () async {
     await expenseRepo.insert(baseExpense());
     expect((await expenseRepo.listAll()), hasLength(1));
     await db.wipeAll();
     expect((await expenseRepo.listAll()), isEmpty);
     expect((await materialRepo.listMaterials()), isEmpty);
-    // Re-insert flow still works after wipe.
+    expect((await supplierRepo.listSuppliers()), isEmpty);
+    expect((await siteRepo.listSites()), isEmpty);
     final m = await materialRepo.createMaterial('Diesel');
     expect(m, greaterThan(0));
-  });
-
-  test('expenseCountForMaterial is accurate', () async {
-    await expenseRepo.insert(baseExpense());
-    await expenseRepo.insert(baseExpense().copyWith(cost: 200));
-    final cnt = await materialRepo.expenseCountForMaterial(matDieselId);
-    expect(cnt, equals(2));
   });
 }

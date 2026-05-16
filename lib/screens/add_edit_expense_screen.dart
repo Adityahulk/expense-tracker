@@ -5,8 +5,11 @@ import 'package:intl/intl.dart';
 
 import '../models/expense.dart';
 import '../models/material.dart';
+import '../models/route_endpoint.dart';
 import '../providers/providers.dart';
+import '../widgets/autocomplete_field.dart';
 import '../widgets/error_snack.dart';
+import '../widgets/from_to_picker.dart';
 
 class AddEditExpenseScreen extends ConsumerStatefulWidget {
   const AddEditExpenseScreen({super.key, this.existing});
@@ -30,6 +33,8 @@ class _AddEditExpenseScreenState extends ConsumerState<AddEditExpenseScreen> {
   int? _qualityId;
   int? _unitId;
   DateTime _date = DateTime.now();
+  RouteEndpoint _from = const RouteEndpoint.empty();
+  RouteEndpoint _to = const RouteEndpoint.empty();
   bool _saving = false;
 
   bool get _isEditing => widget.existing != null;
@@ -46,6 +51,8 @@ class _AddEditExpenseScreenState extends ConsumerState<AddEditExpenseScreen> {
       _qtyCtrl.text = _trimZero(ex.quantity);
       _noteCtrl.text = ex.note ?? '';
       _personCtrl.text = ex.personName;
+      _from = ex.fromEndpoint;
+      _to = ex.toEndpoint;
       _date = DateTime.parse(ex.date);
     }
   }
@@ -95,8 +102,6 @@ class _AddEditExpenseScreenState extends ConsumerState<AddEditExpenseScreen> {
               ),
             );
           }
-          // Sanity-clamp: if editing an expense whose material/quality/unit got renamed,
-          // _materialId stays valid via FK.
           return _buildForm(materials);
         },
       ),
@@ -127,6 +132,20 @@ class _AddEditExpenseScreenState extends ConsumerState<AddEditExpenseScreen> {
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          FromToPicker(
+            label: 'From',
+            icon: Icons.arrow_outward,
+            value: _from,
+            onChanged: (v) => setState(() => _from = v),
+          ),
+          const SizedBox(height: 16),
+          FromToPicker(
+            label: 'To',
+            icon: Icons.arrow_downward,
+            value: _to,
+            onChanged: (v) => setState(() => _to = v),
+          ),
+          const SizedBox(height: 20),
           DropdownButtonFormField<int>(
             value: _materialId,
             decoration: const InputDecoration(
@@ -148,16 +167,14 @@ class _AddEditExpenseScreenState extends ConsumerState<AddEditExpenseScreen> {
             },
           ),
           const SizedBox(height: 12),
-          if (_materialId != null) ...[
+          if (_materialId != null)
             Consumer(builder: (ctx, ref, _) {
               final qAsync = ref.watch(qualitiesProvider(_materialId!));
               return qAsync.when(
-                loading: () =>
-                    const LinearProgressIndicator(minHeight: 2),
+                loading: () => const LinearProgressIndicator(minHeight: 2),
                 error: (e, _) => Text('Error loading qualities: $e'),
                 data: (qs) {
                   if (qs.isEmpty) return const SizedBox.shrink();
-                  // If current _qualityId isn't in this material's list, clear it.
                   if (_qualityId != null &&
                       !qs.any((q) => q.id == _qualityId)) {
                     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -186,7 +203,6 @@ class _AddEditExpenseScreenState extends ConsumerState<AddEditExpenseScreen> {
                 },
               );
             }),
-          ],
           Row(
             children: [
               Expanded(
@@ -282,16 +298,14 @@ class _AddEditExpenseScreenState extends ConsumerState<AddEditExpenseScreen> {
             ),
           ),
           const SizedBox(height: 12),
-          TextFormField(
+          AutocompleteField(
             controller: _personCtrl,
-            decoration: const InputDecoration(
-              labelText: 'Spent by (person or organization) *',
-              hintText: 'e.g. Ramesh / Acme Co.',
-              border: OutlineInputBorder(),
-            ),
-            validator: (v) =>
-                (v == null || v.trim().isEmpty) ? 'Required' : null,
+            label: 'Spent by (optional)',
+            hint: 'e.g. Ramesh / Acme Co.',
+            suggestionsLoader: () =>
+                ref.read(expenseRepoProvider).distinctPersonNames(),
           ),
+          const SizedBox(height: 80),
         ],
       ),
     );
@@ -315,14 +329,41 @@ class _AddEditExpenseScreenState extends ConsumerState<AddEditExpenseScreen> {
     if (picked != null) setState(() => _date = picked);
   }
 
+  String? _endpointError(RouteEndpoint e, String label) {
+    if (e.kind == null) return '$label: pick a kind (Supplier, Site, or Plot).';
+    switch (e.kind!) {
+      case EndpointKind.supplier:
+        if (e.supplierId == null) return '$label: pick a supplier.';
+        break;
+      case EndpointKind.site:
+        if (e.siteId == null) return '$label: pick a site.';
+        break;
+      case EndpointKind.plot:
+        if (e.siteId == null) return '$label: pick a site for the plot.';
+        if (e.plotNumber == null) return '$label: enter a plot number.';
+        break;
+    }
+    return null;
+  }
+
   Future<void> _save() async {
+    final fromErr = _endpointError(_from, 'From');
+    if (fromErr != null) {
+      showError(context, fromErr);
+      return;
+    }
+    final toErr = _endpointError(_to, 'To');
+    if (toErr != null) {
+      showError(context, toErr);
+      return;
+    }
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
     try {
       final now = DateTime.now().millisecondsSinceEpoch;
       final iso = DateFormat('yyyy-MM-dd').format(_date);
       final note = _noteCtrl.text.trim();
-      final candidate = Expense(
+      final candidate = Expense.withRoutes(
         id: widget.existing?.id,
         materialId: _materialId!,
         qualityId: _qualityId,
@@ -332,6 +373,8 @@ class _AddEditExpenseScreenState extends ConsumerState<AddEditExpenseScreen> {
         date: iso,
         note: note.isEmpty ? null : note,
         personName: _personCtrl.text.trim(),
+        from: _from,
+        to: _to,
         createdAt: widget.existing?.createdAt ?? now,
         updatedAt: now,
       );
@@ -372,8 +415,8 @@ class _AddEditExpenseScreenState extends ConsumerState<AddEditExpenseScreen> {
         title: const Text('Duplicate Entry'),
         content: Text(
           count == 1
-              ? 'A matching expense already exists (same material, quality, quantity, unit, cost, date, and note — only the person name may differ). Do you want to continue?'
-              : '$count matching expenses already exist (same material, quality, quantity, unit, cost, date, and note — only the person name may differ). Do you want to continue?',
+              ? 'A matching expense already exists (same material, quality, quantity, unit, cost, date, note, From, and To — only the person name may differ). Do you want to continue?'
+              : '$count matching expenses already exist (same material, quality, quantity, unit, cost, date, note, From, and To — only the person name may differ). Do you want to continue?',
         ),
         actions: [
           TextButton(

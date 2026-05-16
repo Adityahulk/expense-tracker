@@ -6,10 +6,12 @@ import 'package:open_filex/open_filex.dart';
 import '../models/expense.dart';
 import '../models/material.dart';
 import '../models/quality.dart';
+import '../models/site.dart';
+import '../models/supplier.dart';
 import '../providers/providers.dart';
 import '../repositories/expense_repo.dart';
 import '../services/excel_export_service.dart';
-import '../services/file_paths.dart';
+import '../services/file_save.dart';
 import '../widgets/error_snack.dart';
 import '../widgets/expense_tile.dart';
 import 'add_edit_expense_screen.dart';
@@ -24,6 +26,8 @@ class SearchScreen extends ConsumerStatefulWidget {
 class _SearchScreenState extends ConsumerState<SearchScreen> {
   final Set<int> _materialIds = {};
   final Set<int> _qualityIds = {};
+  final Set<int> _supplierIds = {};
+  final Set<int> _siteIds = {};
   DateTime? _from;
   DateTime? _to;
   final _minCostCtrl = TextEditingController();
@@ -43,6 +47,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   ExpenseFilter _buildFilter() => ExpenseFilter(
         materialIds: _materialIds.toList(),
         qualityIds: _qualityIds.toList(),
+        supplierIds: _supplierIds.toList(),
+        siteIds: _siteIds.toList(),
         dateFrom: _from == null ? null : DateFormat('yyyy-MM-dd').format(_from!),
         dateTo: _to == null ? null : DateFormat('yyyy-MM-dd').format(_to!),
         minCost: double.tryParse(_minCostCtrl.text.trim()),
@@ -69,23 +75,26 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     }
     setState(() => _exporting = true);
     try {
-      if (!await FilePaths.ensureStoragePermission()) {
-        if (mounted) {
-          showError(context,
-              'Storage permission denied. Cannot save to Downloads.');
-        }
+      final bytes = ExcelExportService().buildExpensesXlsx(results);
+      final saved = await FileSave.save(
+        bytes: bytes,
+        defaultFilename: defaultExpensesFilename(),
+        dialogTitle: 'Save expenses Excel',
+      );
+      if (!mounted) return;
+      if (saved == null) {
+        showInfo(context, 'Export cancelled.');
         return;
       }
-      final path =
-          await ExcelExportService().exportExpenses(results);
-      if (!mounted) return;
       showInfo(
         context,
-        'Saved: ${path.split('/').last}',
-        action: SnackBarAction(
-          label: 'Open',
-          onPressed: () => OpenFilex.open(path),
-        ),
+        'Saved ${saved.filename}',
+        action: saved.isContentUri
+            ? null
+            : SnackBarAction(
+                label: 'Open',
+                onPressed: () => OpenFilex.open(saved.location),
+              ),
         duration: const Duration(seconds: 8),
       );
     } catch (e) {
@@ -98,6 +107,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   @override
   Widget build(BuildContext context) {
     final materialsAsync = ref.watch(materialsProvider);
+    final suppliersAsync = ref.watch(suppliersProvider);
+    final sitesAsync = ref.watch(sitesProvider);
     return Scaffold(
       appBar: AppBar(
         title: const Text('Search / Filter'),
@@ -141,6 +152,20 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   ),
                   const SizedBox(height: 12),
                 ],
+                _sectionLabel('Suppliers (matches From or To)'),
+                suppliersAsync.when(
+                  loading: () => const LinearProgressIndicator(),
+                  error: (e, _) => Text('Error: $e'),
+                  data: (list) => _supplierChips(list),
+                ),
+                const SizedBox(height: 12),
+                _sectionLabel('Sites (matches From or To)'),
+                sitesAsync.when(
+                  loading: () => const LinearProgressIndicator(),
+                  error: (e, _) => Text('Error: $e'),
+                  data: (list) => _siteChips(list),
+                ),
+                const SizedBox(height: 12),
                 _sectionLabel('Date range'),
                 Row(
                   children: [
@@ -242,6 +267,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                       onPressed: () => setState(() {
                         _materialIds.clear();
                         _qualityIds.clear();
+                        _supplierIds.clear();
+                        _siteIds.clear();
                         _from = null;
                         _to = null;
                         _minCostCtrl.clear();
@@ -319,9 +346,57 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                 _materialIds.add(m.id!);
               } else {
                 _materialIds.remove(m.id!);
-                // Clear qualities that belonged only to this material.
-                // Simpler: clear all and let user re-pick.
                 _qualityIds.clear();
+              }
+            }),
+          ),
+      ],
+    );
+  }
+
+  Widget _supplierChips(List<Supplier> list) {
+    if (list.isEmpty) {
+      return const Text('No suppliers defined.',
+          style: TextStyle(color: Colors.black54));
+    }
+    return Wrap(
+      spacing: 8,
+      runSpacing: 4,
+      children: [
+        for (final s in list)
+          FilterChip(
+            label: Text(s.name),
+            selected: _supplierIds.contains(s.id),
+            onSelected: (sel) => setState(() {
+              if (sel) {
+                _supplierIds.add(s.id!);
+              } else {
+                _supplierIds.remove(s.id!);
+              }
+            }),
+          ),
+      ],
+    );
+  }
+
+  Widget _siteChips(List<Site> list) {
+    if (list.isEmpty) {
+      return const Text('No sites defined.',
+          style: TextStyle(color: Colors.black54));
+    }
+    return Wrap(
+      spacing: 8,
+      runSpacing: 4,
+      children: [
+        for (final s in list)
+          FilterChip(
+            label: Text(s.name),
+            selected: _siteIds.contains(s.id),
+            onSelected: (sel) => setState(() {
+              if (sel) {
+                _siteIds.add(s.id!);
+              } else {
+                _siteIds.remove(s.id!);
               }
             }),
           ),
@@ -342,7 +417,6 @@ class _QualityFilter extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // Combine qualities from all currently selected materials.
     final futures =
         materialIds.map((m) => ref.watch(qualitiesProvider(m).future));
     return FutureBuilder<List<List<Quality>>>(

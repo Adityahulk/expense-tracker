@@ -1,26 +1,19 @@
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:excel/excel.dart';
 import 'package:intl/intl.dart';
-import 'package:path/path.dart' as p;
 
 import '../models/expense.dart';
 import '../models/material.dart';
 import '../models/quality.dart';
+import '../models/site.dart';
+import '../models/supplier.dart';
 import '../models/unit.dart';
-import 'file_paths.dart';
 
 class ExcelExportService {
-  /// Export a filtered set of expenses to `<Downloads>/expense-tracker/expenses_<ts>.xlsx`.
-  /// Returns the absolute path of the created file.
-  Future<String> exportExpenses(List<ExpenseRow> rows,
-      {String filenamePrefix = 'expenses'}) async {
-    final dir = await FilePaths.downloadsDir();
-    final filename = '${filenamePrefix}_${FilePaths.timestampSuffix()}.xlsx';
-    final path = p.join(dir, filename);
-
+  /// Build an .xlsx for [rows] and return the raw bytes.
+  Uint8List buildExpensesXlsx(List<ExpenseRow> rows) {
     final excel = Excel.createExcel();
-    // Excel.createExcel makes a default sheet named "Sheet1" — rename it.
     excel.rename('Sheet1', 'Expenses');
     final sheet = excel['Expenses'];
 
@@ -28,29 +21,18 @@ class ExcelExportService {
     for (final r in rows) {
       _writeExpenseRow(sheet, r);
     }
-
-    final bytes = excel.save();
-    if (bytes == null) {
-      throw StateError('Excel.save returned null bytes');
-    }
-    final file = File(path);
-    await file.writeAsBytes(bytes, flush: true);
-    return path;
+    return _save(excel);
   }
 
-  /// Full backup: expenses + master data, each on its own sheet.
-  /// Returns the absolute path of the created file.
-  Future<String> exportFullBackup({
+  /// Full backup workbook: expenses + master data on separate sheets.
+  Uint8List buildFullBackupXlsx({
     required List<ExpenseRow> expenses,
     required List<MaterialItem> materials,
     required Map<int, List<Quality>> qualitiesByMaterial,
     required Map<int, List<UnitItem>> unitsByMaterial,
-    String filenamePrefix = 'expense-tracker_backup',
-  }) async {
-    final dir = await FilePaths.downloadsDir();
-    final filename = '${filenamePrefix}_${FilePaths.timestampSuffix()}.xlsx';
-    final path = p.join(dir, filename);
-
+    required List<Supplier> suppliers,
+    required List<Site> sites,
+  }) {
     final excel = Excel.createExcel();
     excel.rename('Sheet1', 'Expenses');
     final expensesSheet = excel['Expenses'];
@@ -103,17 +85,46 @@ class ExcelExportService {
       }
     }
 
+    final suppliersSheet = excel['Suppliers'];
+    suppliersSheet.appendRow(<CellValue>[
+      TextCellValue('ID'),
+      TextCellValue('Name'),
+      TextCellValue('Created'),
+    ]);
+    for (final s in suppliers) {
+      suppliersSheet.appendRow(<CellValue>[
+        IntCellValue(s.id ?? 0),
+        TextCellValue(s.name),
+        TextCellValue(_isoFromEpoch(s.createdAt)),
+      ]);
+    }
+
+    final sitesSheet = excel['Sites'];
+    sitesSheet.appendRow(<CellValue>[
+      TextCellValue('ID'),
+      TextCellValue('Name'),
+      TextCellValue('Plot count'),
+      TextCellValue('Created'),
+    ]);
+    for (final s in sites) {
+      sitesSheet.appendRow(<CellValue>[
+        IntCellValue(s.id ?? 0),
+        TextCellValue(s.name),
+        IntCellValue(s.plotCount),
+        TextCellValue(_isoFromEpoch(s.createdAt)),
+      ]);
+    }
+
+    return _save(excel);
+  }
+
+  static Uint8List _save(Excel excel) {
     final bytes = excel.save();
     if (bytes == null) {
       throw StateError('Excel.save returned null bytes');
     }
-    await File(path).writeAsBytes(bytes, flush: true);
-    return path;
+    return Uint8List.fromList(bytes);
   }
-
-  // ── helpers ───────────────────────────────────────────────────────────────
-
-  static final NumberFormat _money = NumberFormat('#,##0.00');
 
   void _writeExpenseHeader(Sheet sheet) {
     sheet.appendRow(<CellValue>[
@@ -123,6 +134,8 @@ class ExcelExportService {
       TextCellValue('Quantity'),
       TextCellValue('Unit'),
       TextCellValue('Cost'),
+      TextCellValue('From'),
+      TextCellValue('To'),
       TextCellValue('Spent by'),
       TextCellValue('Note'),
       TextCellValue('Recorded at'),
@@ -138,6 +151,8 @@ class ExcelExportService {
       DoubleCellValue(e.quantity),
       TextCellValue(r.unitName ?? ''),
       DoubleCellValue(e.cost),
+      TextCellValue(r.fromDisplay()),
+      TextCellValue(r.toDisplay()),
       TextCellValue(e.personName),
       TextCellValue(e.note ?? ''),
       TextCellValue(_isoFromEpoch(e.createdAt)),
@@ -148,8 +163,12 @@ class ExcelExportService {
     final dt = DateTime.fromMillisecondsSinceEpoch(ms);
     return DateFormat('yyyy-MM-dd HH:mm:ss').format(dt);
   }
+}
 
-  // kept for potential future use
-  // ignore: unused_element
-  static String _formatMoney(double v) => _money.format(v);
+/// Build a default filename containing a timestamp.
+String defaultExpensesFilename({String prefix = 'expenses'}) {
+  final now = DateTime.now();
+  String two(int n) => n.toString().padLeft(2, '0');
+  return '${prefix}_${now.year}-${two(now.month)}-${two(now.day)}_'
+      '${two(now.hour)}${two(now.minute)}${two(now.second)}.xlsx';
 }

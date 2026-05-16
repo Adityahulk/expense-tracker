@@ -1,7 +1,7 @@
 name: expense_tracker
 description: "Offline expense tracker for material expenses."
 publish_to: 'none'
-version: 1.0.0+1
+version: 2.0.0+2
 
 environment:
   sdk: '>=3.2.6 <4.0.0'
@@ -23,15 +23,21 @@ dependencies:
   # Excel export
   excel: ^4.0.2
 
-  # Files / sharing / opening
+  # Files / opening
   open_filex: ^4.4.0
   share_plus: ^7.2.2
 
-  # External storage (Downloads path)
-  external_path: ^1.0.3
+  # System file save dialog (Android SAF)
+  flutter_file_dialog: ^3.0.2
 
-  # Permissions
-  permission_handler: ^11.2.0
+  # Backup zip archive
+  archive: ^3.4.10
+
+  # Secure storage for passcode hashes (Android Keystore-backed)
+  flutter_secure_storage: ^9.0.0
+
+  # PBKDF2 / hashing
+  crypto: ^3.0.3
 
   # Formatting
   intl: ^0.19.0
