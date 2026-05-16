@@ -25,6 +25,7 @@ class AddEditExpenseScreen extends ConsumerStatefulWidget {
 class _AddEditExpenseScreenState extends ConsumerState<AddEditExpenseScreen> {
   final _formKey = GlobalKey<FormState>();
   final _costCtrl = TextEditingController();
+  final _costPerUnitCtrl = TextEditingController();
   final _qtyCtrl = TextEditingController();
   final _noteCtrl = TextEditingController();
   final _personCtrl = TextEditingController();
@@ -36,6 +37,8 @@ class _AddEditExpenseScreenState extends ConsumerState<AddEditExpenseScreen> {
   RouteEndpoint _from = const RouteEndpoint.empty();
   RouteEndpoint _to = const RouteEndpoint.empty();
   bool _saving = false;
+  bool _updatingCalculatedCost = false;
+  _CostInputSource _lastCostInputSource = _CostInputSource.totalCost;
 
   bool get _isEditing => widget.existing != null;
 
@@ -49,6 +52,9 @@ class _AddEditExpenseScreenState extends ConsumerState<AddEditExpenseScreen> {
       _unitId = ex.unitId;
       _costCtrl.text = _trimZero(ex.cost);
       _qtyCtrl.text = _trimZero(ex.quantity);
+      if (ex.quantity != 0) {
+        _costPerUnitCtrl.text = _formatCalculatedNumber(ex.cost / ex.quantity);
+      }
       _noteCtrl.text = ex.note ?? '';
       _personCtrl.text = ex.personName;
       _from = ex.fromEndpoint;
@@ -60,6 +66,7 @@ class _AddEditExpenseScreenState extends ConsumerState<AddEditExpenseScreen> {
   @override
   void dispose() {
     _costCtrl.dispose();
+    _costPerUnitCtrl.dispose();
     _qtyCtrl.dispose();
     _noteCtrl.dispose();
     _personCtrl.dispose();
@@ -69,6 +76,11 @@ class _AddEditExpenseScreenState extends ConsumerState<AddEditExpenseScreen> {
   static String _trimZero(double v) {
     final s = v.toString();
     return s.endsWith('.0') ? s.substring(0, s.length - 2) : s;
+  }
+
+  static String _formatCalculatedNumber(double v) {
+    final s = v.toStringAsFixed(2);
+    return s.replaceFirst(RegExp(r'\.?0+$'), '');
   }
 
   @override
@@ -218,6 +230,7 @@ class _AddEditExpenseScreenState extends ConsumerState<AddEditExpenseScreen> {
                     border: OutlineInputBorder(),
                   ),
                   validator: _validateNonNegativeNumber,
+                  onChanged: (_) => _recalculateCosts(),
                 ),
               ),
               const SizedBox(width: 12),
@@ -234,8 +247,7 @@ class _AddEditExpenseScreenState extends ConsumerState<AddEditExpenseScreen> {
                             if (us.isEmpty) return const SizedBox.shrink();
                             if (_unitId != null &&
                                 !us.any((u) => u.id == _unitId)) {
-                              WidgetsBinding.instance
-                                  .addPostFrameCallback((_) {
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
                                 if (mounted) setState(() => _unitId = null);
                               });
                             }
@@ -263,6 +275,25 @@ class _AddEditExpenseScreenState extends ConsumerState<AddEditExpenseScreen> {
           ),
           const SizedBox(height: 12),
           TextFormField(
+            controller: _costPerUnitCtrl,
+            keyboardType: const TextInputType.numberWithOptions(
+                decimal: true, signed: false),
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+            ],
+            decoration: const InputDecoration(
+              labelText: 'Cost per unit',
+              prefixText: '₹ ',
+              border: OutlineInputBorder(),
+            ),
+            validator: _validateOptionalNonNegativeNumber,
+            onChanged: (_) {
+              _lastCostInputSource = _CostInputSource.costPerUnit;
+              _recalculateCosts();
+            },
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
             controller: _costCtrl,
             keyboardType: const TextInputType.numberWithOptions(
                 decimal: true, signed: false),
@@ -275,6 +306,10 @@ class _AddEditExpenseScreenState extends ConsumerState<AddEditExpenseScreen> {
               border: OutlineInputBorder(),
             ),
             validator: _validateNonNegativeNumber,
+            onChanged: (_) {
+              _lastCostInputSource = _CostInputSource.totalCost;
+              _recalculateCosts();
+            },
           ),
           const SizedBox(height: 12),
           InkWell(
@@ -317,6 +352,39 @@ class _AddEditExpenseScreenState extends ConsumerState<AddEditExpenseScreen> {
     if (parsed == null) return 'Not a number';
     if (parsed < 0) return 'Must be ≥ 0';
     return null;
+  }
+
+  String? _validateOptionalNonNegativeNumber(String? v) {
+    if (v == null || v.trim().isEmpty) return null;
+    final parsed = double.tryParse(v.trim());
+    if (parsed == null) return 'Not a number';
+    if (parsed < 0) return 'Must be ≥ 0';
+    return null;
+  }
+
+  void _recalculateCosts() {
+    if (_updatingCalculatedCost) return;
+
+    final quantity = double.tryParse(_qtyCtrl.text.trim());
+    if (quantity == null || quantity == 0) return;
+
+    _updatingCalculatedCost = true;
+    try {
+      switch (_lastCostInputSource) {
+        case _CostInputSource.costPerUnit:
+          final costPerUnit = double.tryParse(_costPerUnitCtrl.text.trim());
+          if (costPerUnit == null) return;
+          _costCtrl.text = _formatCalculatedNumber(quantity * costPerUnit);
+          break;
+        case _CostInputSource.totalCost:
+          final cost = double.tryParse(_costCtrl.text.trim());
+          if (cost == null) return;
+          _costPerUnitCtrl.text = _formatCalculatedNumber(cost / quantity);
+          break;
+      }
+    } finally {
+      _updatingCalculatedCost = false;
+    }
   }
 
   Future<void> _pickDate() async {
@@ -430,3 +498,5 @@ class _AddEditExpenseScreenState extends ConsumerState<AddEditExpenseScreen> {
     );
   }
 }
+
+enum _CostInputSource { costPerUnit, totalCost }
