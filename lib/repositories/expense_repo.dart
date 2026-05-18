@@ -9,6 +9,7 @@ class ExpenseFilter {
   final List<int> qualityIds;
   final List<int> supplierIds; // matches either from or to
   final List<int> siteIds; // matches either from or to
+  final int? plotNumber; // matches either from_plot_number or to_plot_number
   final String? dateFrom; // inclusive, yyyy-MM-dd
   final String? dateTo;
   final double? minCost;
@@ -19,6 +20,7 @@ class ExpenseFilter {
     this.qualityIds = const [],
     this.supplierIds = const [],
     this.siteIds = const [],
+    this.plotNumber,
     this.dateFrom,
     this.dateTo,
     this.minCost,
@@ -30,6 +32,7 @@ class ExpenseFilter {
       qualityIds.isEmpty &&
       supplierIds.isEmpty &&
       siteIds.isEmpty &&
+      plotNumber == null &&
       dateFrom == null &&
       dateTo == null &&
       minCost == null &&
@@ -169,6 +172,12 @@ class ExpenseRepo {
           .add('(e.from_site_id IN ($ph) OR e.to_site_id IN ($ph))');
       args.addAll(f.siteIds);
       args.addAll(f.siteIds);
+    }
+    if (f.plotNumber != null) {
+      conditions.add(
+          '(e.from_plot_number = ? OR e.to_plot_number = ?)');
+      args.add(f.plotNumber);
+      args.add(f.plotNumber);
     }
     if (f.dateFrom != null) {
       conditions.add('e.date >= ?');

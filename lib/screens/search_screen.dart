@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:open_filex/open_filex.dart';
@@ -32,6 +33,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   DateTime? _to;
   final _minCostCtrl = TextEditingController();
   final _maxCostCtrl = TextEditingController();
+  final _plotCtrl = TextEditingController();
 
   List<ExpenseRow>? _results;
   bool _running = false;
@@ -41,6 +43,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   void dispose() {
     _minCostCtrl.dispose();
     _maxCostCtrl.dispose();
+    _plotCtrl.dispose();
     super.dispose();
   }
 
@@ -49,6 +52,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         qualityIds: _qualityIds.toList(),
         supplierIds: _supplierIds.toList(),
         siteIds: _siteIds.toList(),
+        plotNumber: int.tryParse(_plotCtrl.text.trim()),
         dateFrom: _from == null ? null : DateFormat('yyyy-MM-dd').format(_from!),
         dateTo: _to == null ? null : DateFormat('yyyy-MM-dd').format(_to!),
         minCost: double.tryParse(_minCostCtrl.text.trim()),
@@ -166,6 +170,25 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   data: (list) => _siteChips(list),
                 ),
                 const SizedBox(height: 12),
+                _sectionLabel('Plot # (matches From or To)'),
+                TextField(
+                  controller: _plotCtrl,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                  ],
+                  decoration: const InputDecoration(
+                    labelText: 'Plot number',
+                    hintText: 'e.g. 17',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.tag),
+                  ),
+                  onChanged: (_) {
+                    // Live rerun? No — let user hit Search. Keep state.
+                    setState(() {});
+                  },
+                ),
+                const SizedBox(height: 12),
                 _sectionLabel('Date range'),
                 Row(
                   children: [
@@ -273,6 +296,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                         _to = null;
                         _minCostCtrl.clear();
                         _maxCostCtrl.clear();
+                        _plotCtrl.clear();
                         _results = null;
                       }),
                       child: const Text('Reset'),

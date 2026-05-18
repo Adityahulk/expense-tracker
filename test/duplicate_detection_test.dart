@@ -197,6 +197,44 @@ void main() {
     expect(results, hasLength(2));
   });
 
+  test('search by plot number matches either side', () async {
+    // Expense 1: From=Acme(supplier), To=Plot Foo#17
+    await expenseRepo.insert(baseExpense());
+    // Expense 2: From=Plot Foo#25, To=Beta(supplier) — no plot 17 anywhere
+    await expenseRepo.insert(baseExpense(
+      from: RouteEndpoint(
+          kind: EndpointKind.plot, siteId: siteFooId, plotNumber: 25),
+      to: RouteEndpoint(
+          kind: EndpointKind.supplier, supplierId: supplierBetaId),
+    ));
+    // Expense 3: From=Acme(supplier), To=Plot Bar#17 — different site, same plot #
+    await expenseRepo.insert(baseExpense(
+      to: RouteEndpoint(
+          kind: EndpointKind.plot, siteId: siteBarId, plotNumber: 17),
+    ));
+    // Expense 4: no plot at all (both sides are suppliers)
+    await expenseRepo.insert(baseExpense(
+      from: RouteEndpoint(
+          kind: EndpointKind.supplier, supplierId: supplierBetaId),
+      to: RouteEndpoint(
+          kind: EndpointKind.supplier, supplierId: supplierAcmeId),
+    ));
+
+    // plot 17 — matches expenses 1 and 3 (Plot Foo#17 and Plot Bar#17)
+    final r17 = await expenseRepo.search(const ExpenseFilter(plotNumber: 17));
+    expect(r17, hasLength(2));
+
+    // plot 17 + site Foo — matches only expense 1
+    final r17Foo = await expenseRepo.search(
+      ExpenseFilter(plotNumber: 17, siteIds: [siteFooId]),
+    );
+    expect(r17Foo, hasLength(1));
+
+    // plot 999 — none
+    final r999 = await expenseRepo.search(const ExpenseFilter(plotNumber: 999));
+    expect(r999, isEmpty);
+  });
+
   test('search by site matches either side', () async {
     await expenseRepo.insert(baseExpense()); // To plot on Foo
     await expenseRepo.insert(baseExpense(

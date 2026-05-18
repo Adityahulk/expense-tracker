@@ -17,10 +17,7 @@ class ExcelExportService {
     excel.rename('Sheet1', 'Expenses');
     final sheet = excel['Expenses'];
 
-    _writeExpenseHeader(sheet);
-    for (final r in rows) {
-      _writeExpenseRow(sheet, r);
-    }
+    _writeExpenseSheet(sheet, rows);
     return _save(excel);
   }
 
@@ -35,116 +32,129 @@ class ExcelExportService {
   }) {
     final excel = Excel.createExcel();
     excel.rename('Sheet1', 'Expenses');
-    final expensesSheet = excel['Expenses'];
-    _writeExpenseHeader(expensesSheet);
-    for (final r in expenses) {
-      _writeExpenseRow(expensesSheet, r);
-    }
 
-    final materialsSheet = excel['Materials'];
-    materialsSheet.appendRow(<CellValue>[
-      TextCellValue('ID'),
-      TextCellValue('Name'),
-      TextCellValue('Created'),
-    ]);
-    for (final m in materials) {
-      materialsSheet.appendRow(<CellValue>[
-        IntCellValue(m.id ?? 0),
-        TextCellValue(m.name),
-        TextCellValue(_isoFromEpoch(m.createdAt)),
-      ]);
-    }
+    _writeExpenseSheet(excel['Expenses'], expenses);
 
-    final qualitiesSheet = excel['Qualities'];
-    qualitiesSheet.appendRow(<CellValue>[
-      TextCellValue('Material'),
-      TextCellValue('Quality'),
-    ]);
-    for (final m in materials) {
-      final qs = qualitiesByMaterial[m.id] ?? const [];
-      for (final q in qs) {
-        qualitiesSheet.appendRow(<CellValue>[
-          TextCellValue(m.name),
-          TextCellValue(q.name),
-        ]);
-      }
-    }
+    final mSheet = excel['Materials'];
+    _writeMasterSheet(
+      mSheet,
+      headers: const ['ID', 'Name', 'Created'],
+      widths: const [8, 24, 22],
+      rows: [
+        for (final m in materials)
+          [
+            IntCellValue(m.id ?? 0),
+            TextCellValue(m.name),
+            TextCellValue(_isoFromEpoch(m.createdAt)),
+          ],
+      ],
+    );
 
-    final unitsSheet = excel['Units'];
-    unitsSheet.appendRow(<CellValue>[
-      TextCellValue('Material'),
-      TextCellValue('Unit'),
-    ]);
-    for (final m in materials) {
-      final us = unitsByMaterial[m.id] ?? const [];
-      for (final u in us) {
-        unitsSheet.appendRow(<CellValue>[
-          TextCellValue(m.name),
-          TextCellValue(u.name),
-        ]);
-      }
-    }
+    final qSheet = excel['Qualities'];
+    _writeMasterSheet(
+      qSheet,
+      headers: const ['Material', 'Quality'],
+      widths: const [24, 20],
+      rows: [
+        for (final m in materials)
+          for (final q in (qualitiesByMaterial[m.id] ?? const <Quality>[]))
+            [TextCellValue(m.name), TextCellValue(q.name)],
+      ],
+    );
 
-    final suppliersSheet = excel['Suppliers'];
-    suppliersSheet.appendRow(<CellValue>[
-      TextCellValue('ID'),
-      TextCellValue('Name'),
-      TextCellValue('Created'),
-    ]);
-    for (final s in suppliers) {
-      suppliersSheet.appendRow(<CellValue>[
-        IntCellValue(s.id ?? 0),
-        TextCellValue(s.name),
-        TextCellValue(_isoFromEpoch(s.createdAt)),
-      ]);
-    }
+    final uSheet = excel['Units'];
+    _writeMasterSheet(
+      uSheet,
+      headers: const ['Material', 'Unit'],
+      widths: const [24, 16],
+      rows: [
+        for (final m in materials)
+          for (final u in (unitsByMaterial[m.id] ?? const <UnitItem>[]))
+            [TextCellValue(m.name), TextCellValue(u.name)],
+      ],
+    );
 
-    final sitesSheet = excel['Sites'];
-    sitesSheet.appendRow(<CellValue>[
-      TextCellValue('ID'),
-      TextCellValue('Name'),
-      TextCellValue('Plot count'),
-      TextCellValue('Created'),
-    ]);
-    for (final s in sites) {
-      sitesSheet.appendRow(<CellValue>[
-        IntCellValue(s.id ?? 0),
-        TextCellValue(s.name),
-        IntCellValue(s.plotCount),
-        TextCellValue(_isoFromEpoch(s.createdAt)),
-      ]);
-    }
+    final sSheet = excel['Suppliers'];
+    _writeMasterSheet(
+      sSheet,
+      headers: const ['ID', 'Name', 'Created'],
+      widths: const [8, 24, 22],
+      rows: [
+        for (final s in suppliers)
+          [
+            IntCellValue(s.id ?? 0),
+            TextCellValue(s.name),
+            TextCellValue(_isoFromEpoch(s.createdAt)),
+          ],
+      ],
+    );
+
+    final stSheet = excel['Sites'];
+    _writeMasterSheet(
+      stSheet,
+      headers: const ['ID', 'Name', 'Plot count', 'Created'],
+      widths: const [8, 24, 12, 22],
+      rows: [
+        for (final s in sites)
+          [
+            IntCellValue(s.id ?? 0),
+            TextCellValue(s.name),
+            IntCellValue(s.plotCount),
+            TextCellValue(_isoFromEpoch(s.createdAt)),
+          ],
+      ],
+    );
 
     return _save(excel);
   }
 
-  static Uint8List _save(Excel excel) {
-    final bytes = excel.save();
-    if (bytes == null) {
-      throw StateError('Excel.save returned null bytes');
+  // ── Expense sheet (with formatting) ──────────────────────────────────────
+
+  /// Column layout: title, width (Excel-character units), alignment.
+  static const List<_ColSpec> _expenseCols = [
+    _ColSpec('Date', 13, HorizontalAlign.Left),
+    _ColSpec('Material', 18, HorizontalAlign.Left),
+    _ColSpec('Quality', 14, HorizontalAlign.Left),
+    _ColSpec('Quantity', 11, HorizontalAlign.Right),
+    _ColSpec('Unit', 10, HorizontalAlign.Left),
+    _ColSpec('Cost', 13, HorizontalAlign.Right),
+    _ColSpec('From', 32, HorizontalAlign.Left, wrap: true),
+    _ColSpec('To', 32, HorizontalAlign.Left, wrap: true),
+    _ColSpec('Spent by', 18, HorizontalAlign.Left),
+    _ColSpec('Note', 36, HorizontalAlign.Left, wrap: true),
+    _ColSpec('Recorded at', 21, HorizontalAlign.Left),
+  ];
+
+  void _writeExpenseSheet(Sheet sheet, List<ExpenseRow> rows) {
+    // Header
+    for (var i = 0; i < _expenseCols.length; i++) {
+      final col = _expenseCols[i];
+      sheet.setColumnWidth(i, col.width);
+      final cell = sheet.cell(
+          CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 0));
+      cell.value = TextCellValue(col.title);
+      cell.cellStyle = _headerStyle;
     }
-    return Uint8List.fromList(bytes);
+    // Data rows
+    for (var r = 0; r < rows.length; r++) {
+      final row = rows[r];
+      final values = _expenseCellValues(row);
+      for (var c = 0; c < values.length; c++) {
+        final col = _expenseCols[c];
+        final cell = sheet.cell(
+            CellIndex.indexByColumnRow(columnIndex: c, rowIndex: r + 1));
+        cell.value = values[c];
+        cell.cellStyle = _bodyStyle(
+          align: col.align,
+          wrap: col.wrap,
+        );
+      }
+    }
   }
 
-  void _writeExpenseHeader(Sheet sheet) {
-    sheet.appendRow(<CellValue>[
-      TextCellValue('Date'),
-      TextCellValue('Material'),
-      TextCellValue('Quality'),
-      TextCellValue('Quantity'),
-      TextCellValue('Unit'),
-      TextCellValue('Cost'),
-      TextCellValue('From'),
-      TextCellValue('To'),
-      TextCellValue('Spent by'),
-      TextCellValue('Note'),
-      TextCellValue('Recorded at'),
-    ]);
-  }
-
-  void _writeExpenseRow(Sheet sheet, ExpenseRow r) {
+  List<CellValue> _expenseCellValues(ExpenseRow r) {
     final e = r.expense;
-    sheet.appendRow(<CellValue>[
+    return <CellValue>[
       TextCellValue(e.date),
       TextCellValue(r.materialName),
       TextCellValue(r.qualityName ?? ''),
@@ -156,13 +166,82 @@ class ExcelExportService {
       TextCellValue(e.personName),
       TextCellValue(e.note ?? ''),
       TextCellValue(_isoFromEpoch(e.createdAt)),
-    ]);
+    ];
+  }
+
+  // ── Master sheets (generic helper) ───────────────────────────────────────
+
+  void _writeMasterSheet(
+    Sheet sheet, {
+    required List<String> headers,
+    required List<double> widths,
+    required List<List<CellValue>> rows,
+  }) {
+    assert(headers.length == widths.length);
+    for (var i = 0; i < headers.length; i++) {
+      sheet.setColumnWidth(i, widths[i]);
+      final cell = sheet.cell(
+          CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 0));
+      cell.value = TextCellValue(headers[i]);
+      cell.cellStyle = _headerStyle;
+    }
+    for (var r = 0; r < rows.length; r++) {
+      final row = rows[r];
+      for (var c = 0; c < row.length; c++) {
+        final cell = sheet.cell(
+            CellIndex.indexByColumnRow(columnIndex: c, rowIndex: r + 1));
+        cell.value = row[c];
+        cell.cellStyle = _bodyStyle(
+          align: row[c] is IntCellValue || row[c] is DoubleCellValue
+              ? HorizontalAlign.Right
+              : HorizontalAlign.Left,
+        );
+      }
+    }
+  }
+
+  // ── Styles ────────────────────────────────────────────────────────────────
+
+  static final CellStyle _headerStyle = CellStyle(
+    bold: true,
+    backgroundColorHex: ExcelColor.grey300,
+    fontColorHex: ExcelColor.black,
+    horizontalAlign: HorizontalAlign.Center,
+    verticalAlign: VerticalAlign.Center,
+  );
+
+  CellStyle _bodyStyle({
+    required HorizontalAlign align,
+    bool wrap = false,
+  }) =>
+      CellStyle(
+        horizontalAlign: align,
+        verticalAlign: VerticalAlign.Center,
+        textWrapping: wrap ? TextWrapping.WrapText : null,
+      );
+
+  // ── Misc ──────────────────────────────────────────────────────────────────
+
+  static Uint8List _save(Excel excel) {
+    final bytes = excel.save();
+    if (bytes == null) {
+      throw StateError('Excel.save returned null bytes');
+    }
+    return Uint8List.fromList(bytes);
   }
 
   static String _isoFromEpoch(int ms) {
     final dt = DateTime.fromMillisecondsSinceEpoch(ms);
     return DateFormat('yyyy-MM-dd HH:mm:ss').format(dt);
   }
+}
+
+class _ColSpec {
+  final String title;
+  final double width;
+  final HorizontalAlign align;
+  final bool wrap;
+  const _ColSpec(this.title, this.width, this.align, {this.wrap = false});
 }
 
 /// Build a default filename containing a timestamp.
